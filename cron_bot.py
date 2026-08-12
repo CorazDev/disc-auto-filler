@@ -30,93 +30,88 @@ KEYWORD_MAPPING = {
 
 intents = discord.Intents.default()
 intents.message_content = True
-client = discord.Client(intents=intents)
 
-async def process_messages():
-    await client.login(os.getenv("DISCORD_TOKEN"))
-    
-    # Lancement de la connexion en tâche de fond
-    asyncio.create_task(client.connect())
-    await client.wait_until_ready()
-    
-    print(f" Connecté avec succès en tant que {client.user}")
+class CronBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents)
 
-    try:
-        source_channel = client.get_channel(SOURCE_CHANNEL_ID)
-        if not source_channel:
-            print(f" ERREUR : Le salon ID {SOURCE_CHANNEL_ID} n'a pas été trouvé. Vérifiez l'ID et les accès du bot.")
-            return
+    async def setup_hook(self):
+        # Cette méthode s'exécute immédiatement après la connexion réussie
+        asyncio.create_task(self.run_task())
 
-        print(f" Salon trouvé : #{source_channel.name}. Début de l'analyse...")
+    async def run_task(self):
+        await self.wait_until_ready()
+        print(f"Connecté en tant que {self.user}")
 
-        async for message in source_channel.history(limit=20):
-            if message.author == client.user:
-                continue
+        try:
+            source_channel = self.get_channel(SOURCE_CHANNEL_ID)
+            if not source_channel:
+                print(f"ERREUR : Salon source ID {SOURCE_CHANNEL_ID} introuvable.")
+                return
 
-            has_been_processed = any(reaction.emoji == "✅" and reaction.me for reaction in message.reactions)
-            if has_been_processed:
-                continue
+            print(f"Salon trouvé : #{source_channel.name}. Début du scan...")
 
-            print(f"\n--- Analyse du message ID {message.id} ---")
-            print(f"Auteur : {message.author.name}")
-            print(f"Contenu : '{message.content}'")
+            async for message in source_channel.history(limit=20):
+                if message.author == self.user:
+                    continue
 
-            # Récupération des pièces jointes
-            images = [att for att in message.attachments if att.content_type and att.content_type.startswith("image/")]
-            
-            # Récupération des embeds
-            embed_images = []
-            if message.embeds:
-                for embed in message.embeds:
-                    if embed.image and embed.image.url:
-                        embed_images.append(embed.image.url)
-                    elif embed.thumbnail and embed.thumbnail.url:
-                        embed_images.append(embed.thumbnail.url)
+                has_been_processed = any(reaction.emoji == "✅" and reaction.me for reaction in message.reactions)
+                if has_been_processed:
+                    continue
 
-            print(f"Images détectées : {len(images)} fichier(s), {len(embed_images)} embed(s)")
+                print(f"--- Message ID {message.id} ---")
+                print(f"Contenu : '{message.content}'")
 
-            content_lower = message.content.lower()
-            target_channel_id = None
+                images = [att for att in message.attachments if att.content_type and att.content_type.startswith("image/")]
+                
+                embed_images = []
+                if message.embeds:
+                    for embed in message.embeds:
+                        if embed.image and embed.image.url:
+                            embed_images.append(embed.image.url)
+                        elif embed.thumbnail and embed.thumbnail.url:
+                            embed_images.append(embed.thumbnail.url)
 
-            for channel_id, keywords in KEYWORD_MAPPING.items():
-                matched_keywords = [kw for kw in keywords if kw.lower() in content_lower]
-                if matched_keywords:
-                    print(f" Mot(s)-clé(s) trouvé(s) : {matched_keywords}")
-                    target_channel_id = channel_id
-                    break
+                print(f"Images trouvées : {len(images)} fichier(s), {len(embed_images)} embed(s)")
 
-            if target_channel_id:
-                target_channel = client.get_channel(target_channel_id)
-                if target_channel:
-                    caption = f"📷 Image issue de l'annonce de **{message.author.name}**\n{message.content}"
-                    
-                    try:
+                content_lower = message.content.lower()
+                target_channel_id = None
+
+                for channel_id, keywords in KEYWORD_MAPPING.items():
+                    matched = [kw for kw in keywords if kw.lower() in content_lower]
+                    if matched:
+                        print(f"Mots-clés trouvés : {matched}")
+                        target_channel_id = channel_id
+                        break
+
+                if target_channel_id:
+                    target_channel = self.get_channel(target_channel_id)
+                    if target_channel:
+                        caption = f"📷 Image de **{message.author.name}**\n{message.content}"
+                        
                         if images:
                             files = [await img.to_file() for img in images]
                             await target_channel.send(content=caption, files=files)
-                            print(" --> Envoyé dans le salon avec succès !")
+                            print("--> Envoyé (fichiers)")
                         elif embed_images:
-                            urls = "\n".join(embed_images)
-                            await target_channel.send(content=f"{caption}\n{urls}")
-                            print(" --> Envoyé (embeds) dans le salon avec succès !")
+                            await target_channel.send(content=f"{caption}\n" + "\n".join(embed_images))
+                            print("--> Envoyé (embeds)")
                         else:
                             await target_channel.send(content=caption)
-                            print(" --> Texte envoyé sans image.")
+                            print("--> Envoyé (texte)")
 
                         await message.add_reaction("✅")
-                    except Exception as e:
-                        print(f" Erreur lors de l'envoi dans le salon {target_channel_id} : {e}")
+                    else:
+                        print(f"ERREUR : Salon cible {target_channel_id} introuvable")
                 else:
-                    print(f" ERREUR : Impossible de trouver le salon cible ID {target_channel_id}")
-            else:
-                print(" Aucun mot-clé correspondant.")
-                await message.add_reaction("✅")
+                    print("Aucun mot-clé correspondant.")
+                    await message.add_reaction("✅")
 
-    except Exception as err:
-        print(f" Erreur pendant le traitement : {err}")
-    finally:
-        print(" Traitement terminé. Fermeture de la connexion...")
-        await client.close()
+        except Exception as e:
+            print(f"Erreur globale : {e}")
+        finally:
+            print("Traitement terminé, fermeture...")
+            await self.close()
 
-if __name__ == "__main__":
-    asyncio.run(process_messages())
+bot = CronBot()
+bot.run(os.getenv("DISCORD_TOKEN"))
