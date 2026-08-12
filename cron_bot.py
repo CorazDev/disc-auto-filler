@@ -40,60 +40,74 @@ async def run_processing():
     
     if source_channel:
         async for message in source_channel.history(limit=20):
-            # Éviter de traiter les messages du bot
             if message.author == client.user:
                 continue
 
-            # Éviter de traiter un message déjà validé (✅)
             has_been_processed = any(reaction.emoji == "✅" and reaction.me for reaction in message.reactions)
             if has_been_processed:
                 continue
 
-            # Récupérer les images
+            print(f"--- Analyse du message ID {message.id} ---")
+            print(f"Contenu du message : '{message.content}'")
+
+            # 1. Pièces jointes directes
             images = [att for att in message.attachments if att.content_type and att.content_type.startswith("image/")]
             
+            # 2. Images dans les Embeds
             embed_images = []
-            if not images and message.embeds:
+            if message.embeds:
                 for embed in message.embeds:
-                    if embed.image:
+                    if embed.image and embed.image.url:
                         embed_images.append(embed.image.url)
+                    elif embed.thumbnail and embed.thumbnail.url:
+                        embed_images.append(embed.thumbnail.url)
 
-            if images or embed_images:
-                content_lower = message.content.lower()
-                target_channel_id = None
+            print(f"Images trouvées : {len(images)} pièce(s) jointe(s), {len(embed_images)} embed(s)")
 
-                for channel_id, keywords in KEYWORD_MAPPING.items():
-                    if any(keyword in content_lower for keyword in keywords):
-                        target_channel_id = channel_id
-                        break
+            # Si aucune image détectée mais qu'un lien d'image est dans le texte
+            content_lower = message.content.lower()
 
-                if target_channel_id:
-                    target_channel = client.get_channel(target_channel_id)
-                    if target_channel:
-                        caption = f"📷 Image issue de l'annonce de **{message.author.name}**\n{message.content}"
-                        
+            target_channel_id = None
+            for channel_id, keywords in KEYWORD_MAPPING.items():
+                matched_keywords = [kw for kw in keywords if kw.lower() in content_lower]
+                if matched_keywords:
+                    print(f"Mot(s)-clé(s) détecté(s) : {matched_keywords}")
+                    target_channel_id = channel_id
+                    break
+
+            if target_channel_id:
+                target_channel = client.get_channel(target_channel_id)
+                if target_channel:
+                    caption = f"📷 Image issue de l'annonce de **{message.author.name}**\n{message.content}"
+                    
+                    try:
                         if images:
                             files = [await img.to_file() for img in images]
                             await target_channel.send(content=caption, files=files)
+                            print("--> Message et images envoyés avec succès !")
                         elif embed_images:
-                            await target_channel.send(content=f"{caption}\n" + "\n".join(embed_images))
-                        
-                        try:
-                            await message.add_reaction("✅")
-                        except Exception as e:
-                            print(f"Impossible d'ajouter la réaction : {e}")
+                            urls = "\n".join(embed_images)
+                            await target_channel.send(content=f"{caption}\n{urls}")
+                            print("--> Message et liens d'embeds envoyés avec succès !")
+                        else:
+                            # S'il y a un mot-clé mais pas d'image détectée, on poste le texte
+                            await target_channel.send(content=caption)
+                            print("--> Texte envoyé (aucune image détectée).")
 
-                else:
-                    try:
                         await message.add_reaction("✅")
                     except Exception as e:
-                        print(f"Impossible d'ajouter la réaction : {e}")
+                        print(f"Erreur lors de l'envoi dans le salon {target_channel_id} : {e}")
+                else:
+                    print(f"Erreur : Impossible de trouver le salon de destination ID {target_channel_id}")
+            else:
+                print("Aucun mot-clé correspondant trouvé dans le texte.")
+                # Marquer comme traité pour ne pas ré-analyser à chaque fois
+                await message.add_reaction("✅")
 
     await client.close()
 
 async def main():
     async with client:
-        # Lance la tâche de traitement et la connexion en parallèle
         asyncio.create_task(run_processing())
         await client.start(os.getenv("DISCORD_TOKEN"))
 
