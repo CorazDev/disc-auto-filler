@@ -32,18 +32,22 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
-@client.event
-async def on_ready():
-    print(f"Connecté en tant que {client.user}")
+async def process_messages():
+    await client.login(os.getenv("DISCORD_TOKEN"))
     
+    # Lancement de la connexion en tâche de fond
+    asyncio.create_task(client.connect())
+    await client.wait_until_ready()
+    
+    print(f" Connecté avec succès en tant que {client.user}")
+
     try:
         source_channel = client.get_channel(SOURCE_CHANNEL_ID)
         if not source_channel:
-            print(f"Erreur : Salon ID {SOURCE_CHANNEL_ID} introuvable ou inaccessible.")
-            await client.close()
+            print(f" ERREUR : Le salon ID {SOURCE_CHANNEL_ID} n'a pas été trouvé. Vérifiez l'ID et les accès du bot.")
             return
 
-        print(f"Salon trouvé : {source_channel.name}. Début de l'analyse...")
+        print(f" Salon trouvé : #{source_channel.name}. Début de l'analyse...")
 
         async for message in source_channel.history(limit=20):
             if message.author == client.user:
@@ -53,11 +57,14 @@ async def on_ready():
             if has_been_processed:
                 continue
 
-            print(f"--- Analyse du message ID {message.id} ---")
+            print(f"\n--- Analyse du message ID {message.id} ---")
+            print(f"Auteur : {message.author.name}")
             print(f"Contenu : '{message.content}'")
 
+            # Récupération des pièces jointes
             images = [att for att in message.attachments if att.content_type and att.content_type.startswith("image/")]
             
+            # Récupération des embeds
             embed_images = []
             if message.embeds:
                 for embed in message.embeds:
@@ -66,7 +73,7 @@ async def on_ready():
                     elif embed.thumbnail and embed.thumbnail.url:
                         embed_images.append(embed.thumbnail.url)
 
-            print(f"Images trouvées : {len(images)} fichier(s), {len(embed_images)} embed(s)")
+            print(f"Images détectées : {len(images)} fichier(s), {len(embed_images)} embed(s)")
 
             content_lower = message.content.lower()
             target_channel_id = None
@@ -74,7 +81,7 @@ async def on_ready():
             for channel_id, keywords in KEYWORD_MAPPING.items():
                 matched_keywords = [kw for kw in keywords if kw.lower() in content_lower]
                 if matched_keywords:
-                    print(f"Mot(s)-clé(s) détecté(s) : {matched_keywords}")
+                    print(f" Mot(s)-clé(s) trouvé(s) : {matched_keywords}")
                     target_channel_id = channel_id
                     break
 
@@ -87,30 +94,29 @@ async def on_ready():
                         if images:
                             files = [await img.to_file() for img in images]
                             await target_channel.send(content=caption, files=files)
-                            print("--> Message et images envoyés avec succès !")
+                            print(" --> Envoyé dans le salon avec succès !")
                         elif embed_images:
                             urls = "\n".join(embed_images)
                             await target_channel.send(content=f"{caption}\n{urls}")
-                            print("--> Message et embeds envoyés avec succès !")
+                            print(" --> Envoyé (embeds) dans le salon avec succès !")
                         else:
                             await target_channel.send(content=caption)
-                            print("--> Texte envoyé (aucune image détectée).")
+                            print(" --> Texte envoyé sans image.")
 
                         await message.add_reaction("✅")
                     except Exception as e:
-                        print(f"Erreur d'envoi dans le salon {target_channel_id} : {e}")
+                        print(f" Erreur lors de l'envoi dans le salon {target_channel_id} : {e}")
                 else:
-                    print(f"Erreur : Salon de destination {target_channel_id} introuvable.")
+                    print(f" ERREUR : Impossible de trouver le salon cible ID {target_channel_id}")
             else:
-                print("Aucun mot-clé correspondant.")
+                print(" Aucun mot-clé correspondant.")
                 await message.add_reaction("✅")
 
     except Exception as err:
-        print(f"Erreur globale durant le traitement : {err}")
-
+        print(f" Erreur pendant le traitement : {err}")
     finally:
-        print("Fin du traitement, fermeture du bot.")
+        print(" Traitement terminé. Fermeture de la connexion...")
         await client.close()
 
 if __name__ == "__main__":
-    client.run(os.getenv("DISCORD_TOKEN"))
+    asyncio.run(process_messages())
