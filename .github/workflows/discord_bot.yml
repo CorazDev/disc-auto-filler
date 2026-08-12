@@ -4,7 +4,7 @@ on:
   schedule:
     # S'exécute automatiquement toutes les 15 minutes
     - cron: '*/15 * * * *'
-  # Permet aussi un déclenchement manuel depuis GitHub
+    # Permet aussi un déclenchement manuel ou via API (cron-job.org)
   workflow_dispatch:
 
 jobs:
