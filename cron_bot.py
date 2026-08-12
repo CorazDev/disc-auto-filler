@@ -48,6 +48,71 @@ def discord_request(url, method="GET", data=None):
         print(f"Erreur HTTP {e.code}: {e.read().decode('utf-8')}")
         return None
 
+def download_file(url):
+    """Télécharge un fichier (image) depuis Discord."""
+    req = urllib.request.Request(url, headers={"User-Agent": "DiscordBot (https://github.com, 1.0)"})
+    try:
+        with urllib.request.urlopen(req) as response:
+            return response.read()
+    except Exception as e:
+        print(f"Impossible de télécharger l'image {url} : {e}")
+        return None
+
+def send_message_with_files(channel_id, content, image_urls):
+    """Envoie un message avec de vrais fichiers joints (multipart/form-data)."""
+    boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+    body = bytearray()
+
+    # Télécharger les images
+    files = []
+    for idx, url in enumerate(image_urls):
+        file_bytes = download_file(url)
+        if file_bytes:
+            filename = f"image_{idx}.jpg"
+            files.append((filename, file_bytes))
+
+    # Construire la charge utile JSON
+    payload_json = {"content": content}
+    if files:
+        payload_json["attachments"] = [{"id": i, "filename": f[0]} for i, f in enumerate(files)]
+
+    # 1. Ajouter le champ 'payload_json'
+    body.extend(f"--{boundary}\r\n".encode("utf-8"))
+    body.extend('Content-Disposition: form-data; name="payload_json"\r\n'.encode("utf-8"))
+    body.extend('Content-Type: application/json\r\n\r\n'.encode("utf-8"))
+    body.extend(json.dumps(payload_json).encode("utf-8"))
+    body.extend(b"\r\n")
+
+    # 2. Ajouter les fichiers images
+    for i, (filename, file_bytes) in enumerate(files):
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="files[{i}]"; filename="{filename}"\r\n'.encode("utf-8"))
+        body.extend('Content-Type: image/jpeg\r\n\r\n'.encode("utf-8"))
+        body.extend(file_bytes)
+        body.extend(b"\r\n")
+
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+
+    headers = {
+        "Authorization": f"Bot {TOKEN}",
+        "User-Agent": "DiscordBot (https://github.com, 1.0)",
+        "Content-Type": f"multipart/form-data; boundary={boundary}"
+    }
+
+    req = urllib.request.Request(
+        f"https://discord.com/api/v10/channels/{channel_id}/messages",
+        headers=headers,
+        method="POST",
+        data=bytes(body)
+    )
+
+    try:
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        print(f"Erreur lors de l'envoi multipart {e.code}: {e.read().decode('utf-8')}")
+        return None
+
 def main():
     if not TOKEN:
         print("ERREUR : Secret DISCORD_TOKEN manquant.")
@@ -57,12 +122,9 @@ def main():
     messages = discord_request(f"https://discord.com/api/v10/channels/{SOURCE_CHANNEL_ID}/messages?limit=20")
 
     if messages is None:
-        print("ERREUR : Impossible de lire le salon source. Vérifiez l'ID et les permissions du bot.")
+        print("ERREUR : Impossible de lire le salon source.")
         return
 
-    print(f"   --> {len(messages)} message(s) récupéré(s). Analyse en cours...")
-
-    # Récupérer l'ID du bot pour éviter qu'il traite ses propres messages
     user_info = discord_request("https://discord.com/api/v10/users/@me")
     bot_id = user_info.get("id") if user_info else None
 
@@ -73,15 +135,13 @@ def main():
         if author_id == bot_id:
             continue
 
-        # Vérifier si le message a déjà la réaction ✅
         reactions = msg.get("reactions", [])
         already_processed = any(r.get("emoji", {}).get("name") == "✅" and r.get("me") for r in reactions)
 
         if already_processed:
-            print(f"Message {msg_id} déjà traité (✅ présent).")
             continue
 
-        # Extraction du texte (message direct + message transféré via message_snapshots)
+        # Extraction du texte
         content = msg.get("content", "")
         snapshots = msg.get("message_snapshots", [])
         
@@ -89,16 +149,13 @@ def main():
             snap_msg = snapshots[0].get("message", {})
             snap_content = snap_msg.get("content", "")
             if snap_content:
-                content += " " + snap_content
+                content = (content + "\n" + snap_content).strip()
 
         content_lower = content.lower()
-        print(f"\n--- Traitement du message ID {msg_id} ---")
-        print(f"Contenu analysé : '{content}'")
 
-        # Extraction des images (directes, embeds et transferts)
+        # Extraction des images (message + transferts)
         image_urls = []
 
-        # 1. Images du message principal
         for att in msg.get("attachments", []):
             if att.get("content_type", "").startswith("image/"):
                 image_urls.append(att.get("url"))
@@ -109,7 +166,6 @@ def main():
             elif "thumbnail" in emb:
                 image_urls.append(emb["thumbnail"]["url"])
 
-        # 2. Images issues des transferts (snapshots)
         for snap in snapshots:
             snap_msg = snap.get("message", {})
             for att in snap_msg.get("attachments", []):
@@ -121,7 +177,6 @@ def main():
                 elif "thumbnail" in emb:
                     image_urls.append(emb["thumbnail"]["url"])
 
-        # Suppression des doublons d'URLs éventuels
         image_urls = list(set(image_urls))
 
         # Recherche du mot-clé
@@ -129,36 +184,27 @@ def main():
         for channel_id, keywords in KEYWORD_MAPPING.items():
             if any(kw in content_lower for kw in keywords):
                 target_channel_id = channel_id
-                print(f"Mot-clé détecté pour le salon {channel_id}")
                 break
 
-        # Action : Poster le contenu dans le salon cible si trouvé
+        # Action de reposting
         if target_channel_id:
-            caption = f"📷 New post !"
-            if image_urls:
-                caption += "\n" + "\n".join(image_urls)
+            author_name = msg.get('author', {}).get('username')
+            caption = f"📷 New Post !"
 
-            send_res = discord_request(
-                f"https://discord.com/api/v10/channels/{target_channel_id}/messages",
-                method="POST",
-                data={"content": caption}
-            )
+            send_res = send_message_with_files(target_channel_id, caption, image_urls)
             if send_res:
-                print(f"--> Transféré avec succès vers le salon {target_channel_id}")
+                print(f"--> Posté avec succès dans le salon {target_channel_id}")
             else:
                 print(f"--> Échec du transfert vers {target_channel_id}")
         else:
-            print("Aucun mot-clé correspondant dans ce message.")
+            print("Aucun mot-clé correspondant.")
 
-        # Ajouter la réaction ✅ (encodage URL pour l'emoji)
+        # Marquer comme traité avec ✅
         emoji_encoded = urllib.parse.quote("✅")
         discord_request(
             f"https://discord.com/api/v10/channels/{SOURCE_CHANNEL_ID}/messages/{msg_id}/reactions/{emoji_encoded}/@me",
             method="PUT"
         )
-        print("--> Réaction ✅ ajoutée.")
-
-    print("\nTraitement terminé avec succès.")
 
 if __name__ == "__main__":
     main()
