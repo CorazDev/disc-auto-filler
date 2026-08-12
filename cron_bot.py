@@ -141,7 +141,7 @@ def main():
         if already_processed:
             continue
 
-        # Extraction du texte
+        # Extraction du texte (message direct + message transféré via message_snapshots)
         content = msg.get("content", "")
         snapshots = msg.get("message_snapshots", [])
         
@@ -153,7 +153,7 @@ def main():
 
         content_lower = content.lower()
 
-        # Extraction des images (message + transferts)
+        # Extraction des images (directes, embeds et transferts)
         image_urls = []
 
         for att in msg.get("attachments", []):
@@ -179,17 +179,25 @@ def main():
 
         image_urls = list(set(image_urls))
 
-        # Recherche du mot-clé
+        # Recherche du mot-clé et stockage du mot qui a matché
         target_channel_id = None
+        matched_keyword = None
+
         for channel_id, keywords in KEYWORD_MAPPING.items():
-            if any(kw in content_lower for kw in keywords):
-                target_channel_id = channel_id
+            for kw in keywords:
+                if kw in content_lower:
+                    target_channel_id = channel_id
+                    matched_keyword = kw
+                    break
+            if target_channel_id:
                 break
 
         # Action de reposting
         if target_channel_id:
             author_name = msg.get('author', {}).get('username')
-            caption = f"📷 New Post !"
+            
+            # Formatage avec le mot-clé en grand et en gras au début
+            caption = f"# **{matched_keyword.upper()}**\n{content}"
 
             send_res = send_message_with_files(target_channel_id, caption, image_urls)
             if send_res:
