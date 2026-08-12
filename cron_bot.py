@@ -134,7 +134,7 @@ def main():
 
         # Action : Poster le contenu dans le salon cible si trouvé
         if target_channel_id:
-            caption = f"📷 Annonce de **{msg.get('author', {}).get('username')}**\n{content}"
+            caption = f"📷 New post !"
             if image_urls:
                 caption += "\n" + "\n".join(image_urls)
 
