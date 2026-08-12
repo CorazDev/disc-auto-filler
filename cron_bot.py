@@ -79,7 +79,7 @@ async def on_ready():
             if target_channel_id:
                 try:
                     target_channel = await client.fetch_channel(target_channel_id)
-                    caption = f"📷 Image issue de l'annonce de **{message.author.name}**\n{message.content}"
+                    caption = f"📷 New post ! **{message.author.name}**\n{message.content}"
                     
                     if images:
                         files = [await img.to_file() for img in images]
