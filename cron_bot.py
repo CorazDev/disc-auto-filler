@@ -32,45 +32,41 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
-@client.event
-async def on_ready():
+async def run_processing():
+    await client.wait_until_ready()
     print(f"Connecté en tant que {client.user}")
+    
     source_channel = client.get_channel(SOURCE_CHANNEL_ID)
     
     if source_channel:
-        # Inspecte les 20 derniers messages du salon de réception
         async for message in source_channel.history(limit=20):
-            # Ne pas re-traiter les messages envoyés par le bot lui-même
+            # Éviter de traiter les messages du bot
             if message.author == client.user:
                 continue
 
-            # Vérifier si le message a déjà été traité (s'il porte déjà le coche ✅)
+            # Éviter de traiter un message déjà validé (✅)
             has_been_processed = any(reaction.emoji == "✅" and reaction.me for reaction in message.reactions)
             if has_been_processed:
                 continue
 
-            # Récupérer les images jointes directement
+            # Récupérer les images
             images = [att for att in message.attachments if att.content_type and att.content_type.startswith("image/")]
             
-            # Récupérer les images intégrées sous forme d'Embeds si pas de pièces jointes
             embed_images = []
             if not images and message.embeds:
                 for embed in message.embeds:
                     if embed.image:
                         embed_images.append(embed.image.url)
 
-            # S'il y a au moins une image
             if images or embed_images:
                 content_lower = message.content.lower()
                 target_channel_id = None
 
-                # Test des listes de mots-clés par salon
                 for channel_id, keywords in KEYWORD_MAPPING.items():
                     if any(keyword in content_lower for keyword in keywords):
                         target_channel_id = channel_id
-                        break  # Trouvé ! On arrête la recherche
+                        break
 
-                # Si un mot-clé correspond, on transfère l'image
                 if target_channel_id:
                     target_channel = client.get_channel(target_channel_id)
                     if target_channel:
@@ -82,13 +78,11 @@ async def on_ready():
                         elif embed_images:
                             await target_channel.send(content=f"{caption}\n" + "\n".join(embed_images))
                         
-                        # Marque le message avec un coche ✅
                         try:
                             await message.add_reaction("✅")
                         except Exception as e:
                             print(f"Impossible d'ajouter la réaction : {e}")
 
-                # Si AUCUN mot-clé ne correspond, on coche aussi le message pour éviter de le rescanner en boucle
                 else:
                     try:
                         await message.add_reaction("✅")
@@ -97,6 +91,11 @@ async def on_ready():
 
     await client.close()
 
-client.run(os.getenv("DISCORD_TOKEN"))
+async def main():
+    async with client:
+        # Lance la tâche de traitement et la connexion en parallèle
+        asyncio.create_task(run_processing())
+        await client.start(os.getenv("DISCORD_TOKEN"))
 
-client.run(os.getenv("DISCORD_TOKEN"))
+if __name__ == "__main__":
+    asyncio.run(main())
