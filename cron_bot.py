@@ -23,9 +23,6 @@ KEYWORD_MAPPING = {
     1371683761355227197: ["supreme league", "supreme arena", "normal arena"]
 }
 
-# 3. Salon par défaut (si aucun mot-clé ne correspond dans le texte)
-# DEFAULT_DEST_ID = 555555555555555555 
-
 # ---------------------------------------------------------
 # LOGIQUE DU BOT
 # ---------------------------------------------------------
@@ -153,29 +150,20 @@ def main():
 
         content_lower = content.lower()
 
-        # Extraction des images (directes, embeds et transferts)
+        # Extraction des images (pièces jointes réelles uniquement pour éviter le doublon d'aperçu)
         image_urls = []
 
+        # 1. Pièces jointes du message direct
         for att in msg.get("attachments", []):
             if att.get("content_type", "").startswith("image/"):
                 image_urls.append(att.get("url"))
 
-        for emb in msg.get("embeds", []):
-            if "image" in emb:
-                image_urls.append(emb["image"]["url"])
-            elif "thumbnail" in emb:
-                image_urls.append(emb["thumbnail"]["url"])
-
+        # 2. Pièces jointes des messages transférés (snapshots)
         for snap in snapshots:
             snap_msg = snap.get("message", {})
             for att in snap_msg.get("attachments", []):
                 if att.get("content_type", "").startswith("image/"):
                     image_urls.append(att.get("url"))
-            for emb in snap_msg.get("embeds", []):
-                if "image" in emb:
-                    image_urls.append(emb["image"]["url"])
-                elif "thumbnail" in emb:
-                    image_urls.append(emb["thumbnail"]["url"])
 
         image_urls = list(set(image_urls))
 
