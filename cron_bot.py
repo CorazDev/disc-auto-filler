@@ -32,13 +32,19 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
-async def run_processing():
-    await client.wait_until_ready()
+@client.event
+async def on_ready():
     print(f"Connecté en tant que {client.user}")
     
-    source_channel = client.get_channel(SOURCE_CHANNEL_ID)
-    
-    if source_channel:
+    try:
+        source_channel = client.get_channel(SOURCE_CHANNEL_ID)
+        if not source_channel:
+            print(f"Erreur : Salon ID {SOURCE_CHANNEL_ID} introuvable ou inaccessible.")
+            await client.close()
+            return
+
+        print(f"Salon trouvé : {source_channel.name}. Début de l'analyse...")
+
         async for message in source_channel.history(limit=20):
             if message.author == client.user:
                 continue
@@ -48,12 +54,10 @@ async def run_processing():
                 continue
 
             print(f"--- Analyse du message ID {message.id} ---")
-            print(f"Contenu du message : '{message.content}'")
+            print(f"Contenu : '{message.content}'")
 
-            # 1. Pièces jointes directes
             images = [att for att in message.attachments if att.content_type and att.content_type.startswith("image/")]
             
-            # 2. Images dans les Embeds
             embed_images = []
             if message.embeds:
                 for embed in message.embeds:
@@ -62,12 +66,11 @@ async def run_processing():
                     elif embed.thumbnail and embed.thumbnail.url:
                         embed_images.append(embed.thumbnail.url)
 
-            print(f"Images trouvées : {len(images)} pièce(s) jointe(s), {len(embed_images)} embed(s)")
+            print(f"Images trouvées : {len(images)} fichier(s), {len(embed_images)} embed(s)")
 
-            # Si aucune image détectée mais qu'un lien d'image est dans le texte
             content_lower = message.content.lower()
-
             target_channel_id = None
+
             for channel_id, keywords in KEYWORD_MAPPING.items():
                 matched_keywords = [kw for kw in keywords if kw.lower() in content_lower]
                 if matched_keywords:
@@ -88,28 +91,26 @@ async def run_processing():
                         elif embed_images:
                             urls = "\n".join(embed_images)
                             await target_channel.send(content=f"{caption}\n{urls}")
-                            print("--> Message et liens d'embeds envoyés avec succès !")
+                            print("--> Message et embeds envoyés avec succès !")
                         else:
-                            # S'il y a un mot-clé mais pas d'image détectée, on poste le texte
                             await target_channel.send(content=caption)
                             print("--> Texte envoyé (aucune image détectée).")
 
                         await message.add_reaction("✅")
                     except Exception as e:
-                        print(f"Erreur lors de l'envoi dans le salon {target_channel_id} : {e}")
+                        print(f"Erreur d'envoi dans le salon {target_channel_id} : {e}")
                 else:
-                    print(f"Erreur : Impossible de trouver le salon de destination ID {target_channel_id}")
+                    print(f"Erreur : Salon de destination {target_channel_id} introuvable.")
             else:
-                print("Aucun mot-clé correspondant trouvé dans le texte.")
-                # Marquer comme traité pour ne pas ré-analyser à chaque fois
+                print("Aucun mot-clé correspondant.")
                 await message.add_reaction("✅")
 
-    await client.close()
+    except Exception as err:
+        print(f"Erreur globale durant le traitement : {err}")
 
-async def main():
-    async with client:
-        asyncio.create_task(run_processing())
-        await client.start(os.getenv("DISCORD_TOKEN"))
+    finally:
+        print("Fin du traitement, fermeture du bot.")
+        await client.close()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    client.run(os.getenv("DISCORD_TOKEN"))
