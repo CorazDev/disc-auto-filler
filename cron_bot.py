@@ -12,10 +12,10 @@ SOURCE_CHANNEL_ID = 1536941519154716703
 # 2. Association : ID du salon de destination -> Liste de mots-clés
 KEYWORD_MAPPING = {
     # Salon Dream Realm : se déclenche si le message contient au moins un de ces mots
-    1371683271703793695: ["King Croaker", "Snow Stomper", "Gloommaw", "Doomscourge", "Lady Starfallen", "Sarethiel", "Illucia", "Midnight Harvester"],
+    1371683271703793695: ["king croaker", "snow stomper", "gloommaw", "doomscourge", "lady starfallen", "sarethiel", "illucia", "midnight harvester"],
     
     # Salon Titan Reaver : se déclenche si le message contient au moins un de ces mots
-    1442318745983909999: ["Titan Reaver"],
+    1442318745983909999: ["titan reaver"],
     
     # Salon PvP : se déclenche si le message contient au moins un de ces mots
     1371683761355227197: ["supreme league", "supreme arena", "normal arena"]
