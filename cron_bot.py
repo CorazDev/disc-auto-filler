@@ -1,11 +1,13 @@
 import os
-import asyncio
-import discord
+import json
+import urllib.request
+import urllib.parse
+import urllib.error
 
 # ---------------------------------------------------------
 # CONFIGURATION DES SALONS DISCORD
 # ---------------------------------------------------------
-
+TOKEN = os.getenv("DISCORD_TOKEN")
 # 1. ID de votre salon de réception (où arrivent les annonces suivies)
 SOURCE_CHANNEL_ID = 1536941519154716703 
 
