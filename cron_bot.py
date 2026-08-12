@@ -28,82 +28,135 @@ KEYWORD_MAPPING = {
 # LOGIQUE DU BOT
 # ---------------------------------------------------------
 
-intents = discord.Intents.default()
-intents.message_content = True
-client = discord.Client(intents=intents)
-
-@client.event
-async def on_ready():
-    print(f"=== Connexion réussie : {client.user} ===")
+def discord_request(url, method="GET", data=None):
+    headers = {
+        "Authorization": f"Bot {TOKEN}",
+        "User-Agent": "DiscordBot (https://github.com, 1.0)",
+        "Content-Type": "application/json"
+    }
+    encoded_data = json.dumps(data).encode("utf-8") if data else None
+    req = urllib.request.Request(url, headers=headers, method=method, data=encoded_data)
     
     try:
-        # Interroge directement l'API Discord au lieu d'utiliser le cache
-        print(f"Recherche du salon source {SOURCE_CHANNEL_ID}...")
-        source_channel = await client.fetch_channel(SOURCE_CHANNEL_ID)
-        print(f"Salon source trouvé : #{source_channel.name}")
+        with urllib.request.urlopen(req) as response:
+            if response.status == 204:
+                return True
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        print(f"Erreur HTTP {e.code}: {e.read().decode('utf-8')}")
+        return None
 
-        async for message in source_channel.history(limit=20):
-            if message.author == client.user:
-                continue
+def main():
+    if not TOKEN:
+        print("ERREUR : Secret DISCORD_TOKEN manquant.")
+        return
 
-            has_been_processed = any(reaction.emoji == "✅" and reaction.me for reaction in message.reactions)
-            if has_been_processed:
-                print(f"Message {message.id} déjà traité (✅ présent). Pas de retraitement.")
-                continue
+    print(f"1. Récupération des messages du salon {SOURCE_CHANNEL_ID}...")
+    messages = discord_request(f"https://discord.com/api/v10/channels/{SOURCE_CHANNEL_ID}/messages?limit=20")
 
-            print(f"\n--- Traitement du message ID {message.id} ---")
-            print(f"Contenu du message : '{message.content}'")
+    if messages is None:
+        print("ERREUR : Impossible de lire le salon source. Vérifiez l'ID et les permissions du bot.")
+        return
 
-            # Récupération des images
-            images = [att for att in message.attachments if att.content_type and att.content_type.startswith("image/")]
-            embed_images = []
-            if message.embeds:
-                for embed in message.embeds:
-                    if embed.image and embed.image.url:
-                        embed_images.append(embed.image.url)
-                    elif embed.thumbnail and embed.thumbnail.url:
-                        embed_images.append(embed.thumbnail.url)
+    print(f"   --> {len(messages)} message(s) récupéré(s). Analyse en cours...")
 
-            print(f"Images détectées : {len(images)} fichier(s), {len(embed_images)} embed(s)")
+    # Récupérer l'ID du bot pour éviter qu'il traite ses propres messages
+    user_info = discord_request("https://discord.com/api/v10/users/@me")
+    bot_id = user_info.get("id") if user_info else None
 
-            content_lower = message.content.lower()
-            target_channel_id = None
+    for msg in messages:
+        msg_id = msg.get("id")
+        author_id = msg.get("author", {}).get("id")
 
-            for channel_id, keywords in KEYWORD_MAPPING.items():
-                matched_keywords = [kw for kw in keywords if kw.lower() in content_lower]
-                if matched_keywords:
-                    print(f"Mot(s)-clé(s) détecté(s) : {matched_keywords}")
-                    target_channel_id = channel_id
-                    break
+        if author_id == bot_id:
+            continue
 
-            if target_channel_id:
-                try:
-                    target_channel = await client.fetch_channel(target_channel_id)
-                    caption = f"📷 New post ! **{message.author.name}**\n{message.content}"
-                    
-                    if images:
-                        files = [await img.to_file() for img in images]
-                        await target_channel.send(content=caption, files=files)
-                        print(f"--> Succès : envoyé dans #{target_channel.name}")
-                    elif embed_images:
-                        urls = "\n".join(embed_images)
-                        await target_channel.send(content=f"{caption}\n{urls}")
-                        print(f"--> Succès (embed) : envoyé dans #{target_channel.name}")
-                    else:
-                        await target_channel.send(content=caption)
-                        print(f"--> Succès (texte) : envoyé dans #{target_channel.name}")
+        # Vérifier si le message a déjà la réaction ✅
+        reactions = msg.get("reactions", [])
+        already_processed = any(r.get("emoji", {}).get("name") == "✅" and r.get("me") for r in reactions)
 
-                    await message.add_reaction("✅")
-                except Exception as e:
-                    print(f"Erreur lors de l'envoi vers le salon {target_channel_id} : {e}")
+        if already_processed:
+            print(f"Message {msg_id} déjà traité (✅ présent).")
+            continue
+
+        # Extraction du texte (message direct + message transféré via message_snapshots)
+        content = msg.get("content", "")
+        snapshots = msg.get("message_snapshots", [])
+        
+        if snapshots:
+            snap_msg = snapshots[0].get("message", {})
+            snap_content = snap_msg.get("content", "")
+            if snap_content:
+                content += " " + snap_content
+
+        content_lower = content.lower()
+        print(f"\n--- Traitement du message ID {msg_id} ---")
+        print(f"Contenu analysé : '{content}'")
+
+        # Extraction des images (directes, embeds et transferts)
+        image_urls = []
+
+        # 1. Images du message principal
+        for att in msg.get("attachments", []):
+            if att.get("content_type", "").startswith("image/"):
+                image_urls.append(att.get("url"))
+
+        for emb in msg.get("embeds", []):
+            if "image" in emb:
+                image_urls.append(emb["image"]["url"])
+            elif "thumbnail" in emb:
+                image_urls.append(emb["thumbnail"]["url"])
+
+        # 2. Images issues des transferts (snapshots)
+        for snap in snapshots:
+            snap_msg = snap.get("message", {})
+            for att in snap_msg.get("attachments", []):
+                if att.get("content_type", "").startswith("image/"):
+                    image_urls.append(att.get("url"))
+            for emb in snap_msg.get("embeds", []):
+                if "image" in emb:
+                    image_urls.append(emb["image"]["url"])
+                elif "thumbnail" in emb:
+                    image_urls.append(emb["thumbnail"]["url"])
+
+        # Suppression des doublons d'URLs éventuels
+        image_urls = list(set(image_urls))
+
+        # Recherche du mot-clé
+        target_channel_id = None
+        for channel_id, keywords in KEYWORD_MAPPING.items():
+            if any(kw in content_lower for kw in keywords):
+                target_channel_id = channel_id
+                print(f"Mot-clé détecté pour le salon {channel_id}")
+                break
+
+        # Action : Poster le contenu dans le salon cible si trouvé
+        if target_channel_id:
+            caption = f"📷 Annonce de **{msg.get('author', {}).get('username')}**\n{content}"
+            if image_urls:
+                caption += "\n" + "\n".join(image_urls)
+
+            send_res = discord_request(
+                f"https://discord.com/api/v10/channels/{target_channel_id}/messages",
+                method="POST",
+                data={"content": caption}
+            )
+            if send_res:
+                print(f"--> Transféré avec succès vers le salon {target_channel_id}")
             else:
-                print("Aucun mot-clé correspondant dans ce message.")
-                await message.add_reaction("✅")
+                print(f"--> Échec du transfert vers {target_channel_id}")
+        else:
+            print("Aucun mot-clé correspondant dans ce message.")
 
-    except Exception as e:
-        print(f"ERREUR MAJEURE : {e}")
+        # Ajouter la réaction ✅ (encodage URL pour l'emoji)
+        emoji_encoded = urllib.parse.quote("✅")
+        discord_request(
+            f"https://discord.com/api/v10/channels/{SOURCE_CHANNEL_ID}/messages/{msg_id}/reactions/{emoji_encoded}/@me",
+            method="PUT"
+        )
+        print("--> Réaction ✅ ajoutée.")
 
-    print("\nFin du traitement. Fermeture du bot.")
-    await client.close()
+    print("\nTraitement terminé avec succès.")
 
-client.run(os.getenv("DISCORD_TOKEN"))
+if __name__ == "__main__":
+    main()
